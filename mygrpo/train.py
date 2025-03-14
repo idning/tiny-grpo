@@ -4,6 +4,8 @@ from dataclasses import dataclass, fields
 from typing import Optional
 
 import torch
+import torch.optim as optim
+from torch.nn.utils import clip_grad_norm_
 from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
 
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
@@ -21,6 +23,7 @@ model_ref = AutoModelForCausalLM.from_pretrained(
     torch_dtype=torch.float16,
     device_map=device,
 )
+model_ref.eval()
 
 system_prompt = """A conversation between User and Assistant. The user asks a question, and the Assistant solves it.
 The assistant first thinks about the reasoning process in the mind and then provides the user with the answer. The reasoning process and answer are enclosed within <think> </think> and <answer> </answer> tags, respectively, i.e., <think> reasoning process here </think>
@@ -57,7 +60,9 @@ def seq_log_probs(model, sequence):
     return log_probs.squeeze(dim=-1)  # [12, seq_len]
 
 
+@torch.no_grad()
 def rollout(model, tokenizer, question: str, oracle_answer: str, n_rollout=12):
+    model.eval()
     # You are a a helpful calculator!
     messages = [
         {
@@ -142,3 +147,58 @@ for e in experiences:
         f"============ {e.reward=}",
         e.response,
     )
+
+
+def main():
+    lr = 5e-6
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+    n_steps = 100
+    n_epochs_per_step = 1
+
+    max_norm = 1.0  # gradient clipping
+    clip_eps = 0.2
+    kl_weight = 0.01
+
+    for i in range(100):
+        experiences = rollout(model, tokenizer, "213 + 215 =", "428")
+        episode_return_sum = sum([e.reward for e in experiences])
+
+        model.train()
+        for step_epoch in range(n_epochs_per_step):
+            sequence = torch.stack([e.sequence for e in experiences])
+            log_probs = seq_log_probs(model, sequence)
+
+            log_probs_old = torch.stack([e.log_prob for e in experiences])
+            log_probs_old_ref = torch.stack([e.log_prob_ref for e in experiences])
+            advantages = (
+                torch.stack([e.advantage for e in experiences])
+                .unsqueeze(dim=-1)
+                .to(device)
+            )
+
+            kl = torch.nn.functional.kl_div(
+                log_probs, log_probs_old_ref, reduction="batchmean"
+            ).mean()
+
+            ratio = (log_probs - log_probs_old).exp()
+            surr1 = ratio * advantages
+            surr2 = ratio.clamp(1 - clip_eps, 1 + clip_eps) * advantages
+            loss = -torch.min(surr1, surr2) + kl_weight * kl
+            loss = loss.mean()
+            print(f"{loss=}")
+
+            if not loss.isfinite():
+                print(f"Loss not finite, skipping backward, loss={loss}")
+                continue
+
+            loss.backward()
+            grad_norm = clip_grad_norm_(model.parameters(), max_norm=max_norm)
+            print(f"{step_epoch}: kl={kl: .4f}, grad_norm={grad_norm: .4f}")
+            # wandb.log({"kl": kl, "grad_norm": grad_norm})
+
+            optimizer.step()
+
+        print(f"{i=} {episode_return_sum=}")
+
+
+main()
