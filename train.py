@@ -156,7 +156,7 @@ def sequences_log_probs(
     attention_mask: torch.Tensor,
 ) -> torch.Tensor:
     position_ids = attention_mask.long().cumsum(dim=-1) - 1
-    position_ids.masked_fill_(mask=(attention_mask == 0), value=1)
+    position_ids.masked_fill_(mask=(attention_mask == 0), value=1)  # why??
     output = model.forward(
         input_ids=sequence_ids,
         attention_mask=attention_mask,
