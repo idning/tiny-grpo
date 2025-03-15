@@ -1,4 +1,5 @@
 from typing import Optional
+
 import torch
 import torch.nn as nn
 
@@ -55,7 +56,9 @@ class GRPOLoss(nn.Module):
             log_probs_ref=log_probs_ref,
             action_mask=action_mask,
         )
-
+        if not torch.allclose(log_probs, old_log_probs, atol=1e-3, rtol=1e-3):  # if n_epoch_per_step == 1, this thould be true  # fmt: skip
+            # it happens in low probability, guess it's numerical.
+            print("<<<<<<<<<<<<<<<<< log_probs, old_log_probs not all close")
         ratio = (log_probs - old_log_probs).exp()
         surr1 = ratio * advantages
         surr2 = ratio.clamp(1 - self.clip_eps, 1 + self.clip_eps) * advantages

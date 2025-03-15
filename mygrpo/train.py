@@ -20,14 +20,16 @@ wandb_project = "my-tiny-grpo"  # "tiny_grpo"
 wandb.init(project=wandb_project)
 
 tokenizer = AutoTokenizer.from_pretrained(model_id)
+tokenizer.pad_token = tokenizer.eos_token
+
 model = AutoModelForCausalLM.from_pretrained(
     model_id,
-    torch_dtype=torch.float16,
+    torch_dtype=torch.bfloat16,
     device_map=device,
 )
 model_ref = AutoModelForCausalLM.from_pretrained(
     model_id,
-    torch_dtype=torch.float16,
+    torch_dtype=torch.bfloat16,
     device_map=device,
 )
 model_ref.eval()
@@ -85,7 +87,13 @@ def rollout(model, tokenizer, question: str, oracle_answer: str, n_rollout=12):
     print(f"{prompt=}")
 
     # Tokenize input
-    inputs = tokenizer(prompt, return_tensors="pt").to(device)
+    inputs = tokenizer(
+        prompt,
+        return_tensors="pt",
+        padding=True,  # why need padding, padding_size, return_attention_mask?
+        padding_side="left",
+        return_attention_mask=True,
+    ).to(device)
     print(f"{inputs=}")
     inputs["input_ids"] = inputs["input_ids"].repeat(n_rollout, 1)
     inputs["attention_mask"] = inputs["attention_mask"].repeat(n_rollout, 1)
@@ -120,6 +128,7 @@ def rollout(model, tokenizer, question: str, oracle_answer: str, n_rollout=12):
     log_probs = seq_log_probs(model, sequence_ids)
     print(log_probs.shape)
     log_probs_ref = seq_log_probs(model_ref, sequence_ids)
+    print(f"in rollout: {log_probs.max()=} {log_probs_ref.max()=}")
 
     print(returns, advanteges)
     experiences = []
@@ -176,7 +185,7 @@ def main():
     lr = 5e-6
     optimizer = optim.Adam(model.parameters(), lr=lr)
     n_steps = 100
-    n_epochs_per_step = 2
+    n_epochs_per_step = 1
 
     max_norm = 1.0  # gradient clipping
     clip_eps = 0.2
@@ -199,6 +208,9 @@ def main():
                 .unsqueeze(dim=-1)
                 .to(device)
             )
+            print(
+                f"{log_probs.max()=} {log_probs_old.max()=} {log_probs_old_ref.max()=}"
+            )
 
             # kl = torch.nn.functional.kl_div(
             #     log_probs, log_probs_old_ref, reduction="batchmean"
@@ -208,6 +220,8 @@ def main():
                 log_probs_ref=log_probs_old_ref,
                 action_mask=None,
             ).mean()
+
+            assert torch.allclose(log_probs, log_probs_old, atol=1e-3, rtol=1e-3)  # if n_epoch_per_step == 1, this thould be true  # fmt: skip
 
             ratio = (log_probs - log_probs_old).exp()
             surr1 = ratio * advantages
@@ -225,7 +239,14 @@ def main():
             print(f"{step_epoch}: kl={kl: .4f}, grad_norm={grad_norm: .4f}")
             # wandb.log({"kl": kl, "grad_norm": grad_norm})
 
+            # for p in model.parameters():
+            #     if not p.grad.max().isfinite():
+            #         print("p.grad is not finite")
+            #         raise ValueError("p.grad is not finite")
             optimizer.step()
+            # for p in model.parameters():
+            #     if not p.max().isfinite():
+            #         print("p is not finite")
 
         wandb.log({"returns": episode_return_sum})
         print(f"{i=} {episode_return_sum=}")
