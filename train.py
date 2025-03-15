@@ -80,9 +80,9 @@ def rollout(
     model_inputs = tokenizer(
         [chat_prompt],
         return_tensors="pt",
-        padding=True,
-        padding_side="left",
-        return_attention_mask=True,
+        # padding=True,
+        # padding_side="left",
+        # return_attention_mask=True,
     ).to("cuda")
 
     # duplicate prompt num_rollouts times
@@ -164,7 +164,7 @@ def sequences_log_probs(
         input_ids=sequence_ids,
         attention_mask=attention_mask,
         # position_ids=position_ids,
-        use_cache=False,
+        # use_cache=False,
     )
     logits = output["logits"]
     log_probs = sequence_log_probs_from_logits(

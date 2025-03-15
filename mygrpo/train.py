@@ -59,7 +59,9 @@ def seq_log_probs(model, sequence):
     pad_token_id = tokenizer.eos_token_id
     attention_mask = sequence != pad_token_id
     logits = model(
-        sequence, attention_mask=attention_mask
+        sequence,
+        attention_mask=attention_mask,
+        use_cache=False,
     ).logits  # [12, seq_len, vocab_size]
     print(f"{logits.shape=}")
 
