@@ -28,6 +28,8 @@ def load_model(
     device_map=None,
 ) -> tuple[LlamaForCausalLM, PreTrainedTokenizer]:
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
+    print(f"{tokenizer.pad_token=}")  # it's None
+    print(f"{tokenizer.eos_token=}")
     tokenizer.pad_token = tokenizer.eos_token
     model = LlamaForCausalLM.from_pretrained(
         model_name_or_path,
@@ -160,7 +162,7 @@ def sequences_log_probs(
     output = model.forward(
         input_ids=sequence_ids,
         attention_mask=attention_mask,
-        position_ids=position_ids,
+        # position_ids=position_ids,
         use_cache=False,
     )
     logits = output["logits"]
@@ -199,13 +201,13 @@ def main():
     model_name = "meta-llama/Llama-3.2-1B-Instruct"
     checkpoint_path = Path("./output")
     checkpoint_interval = 20
-    train_batch_size = 16
+    train_batch_size = 12  # orig = 16
     lr = 5e-6
     kl_weight = 0.01
     clip_eps = 0.2
 
     group_size = 12
-    rollouts_per_step = 32
+    rollouts_per_step = 1  # orig = 32
     epochs_per_step = 1
     max_norm = 1.0  # gradient clipping
 
@@ -263,6 +265,8 @@ def main():
 
         with torch.no_grad():
             for q, a in zip(questions, answers):
+                q = "213 + 215 ="
+                a = "428"
                 sequence_ids, returns, action_mask, completions = rollout(
                     model,
                     tokenizer,

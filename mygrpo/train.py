@@ -1,3 +1,4 @@
+import os
 import re
 
 from dataclasses import dataclass, fields
@@ -5,12 +6,18 @@ from typing import Optional
 
 import torch
 import torch.optim as optim
+
+import wandb
 from torch.nn.utils import clip_grad_norm_
 from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
+
+# os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
 model_id = "meta-llama/Llama-3.2-1B-Instruct"
+wandb_project = "my-tiny-grpo"  # "tiny_grpo"
+wandb.init(project=wandb_project)
 
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 model = AutoModelForCausalLM.from_pretrained(
@@ -149,22 +156,39 @@ for e in experiences:
     )
 
 
+def approx_kl_divergence(
+    log_probs: torch.Tensor,
+    log_probs_ref: torch.Tensor,
+    action_mask: Optional[torch.Tensor],
+) -> torch.Tensor:
+    """
+    Monte-Carlo approximation of KL divergence, k3 estimator, see: http://joschu.net/blog/kl-approx.html
+    """
+
+    log_ratio = log_probs_ref.float() - log_probs.float()
+    if action_mask is not None:
+        log_ratio = log_ratio * action_mask
+
+    return log_ratio.exp() - log_ratio - 1
+
+
 def main():
     lr = 5e-6
     optimizer = optim.Adam(model.parameters(), lr=lr)
     n_steps = 100
-    n_epochs_per_step = 1
+    n_epochs_per_step = 2
 
     max_norm = 1.0  # gradient clipping
     clip_eps = 0.2
     kl_weight = 0.01
 
-    for i in range(100):
+    for i in range(n_steps):
         experiences = rollout(model, tokenizer, "213 + 215 =", "428")
         episode_return_sum = sum([e.reward for e in experiences])
 
         model.train()
         for step_epoch in range(n_epochs_per_step):
+            print(f"============={step_epoch=}==============")
             sequence = torch.stack([e.sequence for e in experiences])
             log_probs = seq_log_probs(model, sequence)
 
@@ -176,8 +200,13 @@ def main():
                 .to(device)
             )
 
-            kl = torch.nn.functional.kl_div(
-                log_probs, log_probs_old_ref, reduction="batchmean"
+            # kl = torch.nn.functional.kl_div(
+            #     log_probs, log_probs_old_ref, reduction="batchmean"
+            # ).mean()
+            kl = approx_kl_divergence(
+                log_probs=log_probs,
+                log_probs_ref=log_probs_old_ref,
+                action_mask=None,
             ).mean()
 
             ratio = (log_probs - log_probs_old).exp()
@@ -185,7 +214,7 @@ def main():
             surr2 = ratio.clamp(1 - clip_eps, 1 + clip_eps) * advantages
             loss = -torch.min(surr1, surr2) + kl_weight * kl
             loss = loss.mean()
-            print(f"{loss=}")
+            print(f"{loss=}, {kl=}")
 
             if not loss.isfinite():
                 print(f"Loss not finite, skipping backward, loss={loss}")
@@ -198,6 +227,7 @@ def main():
 
             optimizer.step()
 
+        wandb.log({"returns": episode_return_sum})
         print(f"{i=} {episode_return_sum=}")
 
 
