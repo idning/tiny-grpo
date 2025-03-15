@@ -61,13 +61,10 @@ def seq_log_probs(model, sequence):
     logits = model(
         sequence,
         attention_mask=attention_mask,
-        use_cache=False,
     ).logits  # [12, seq_len, vocab_size]
 
     logits = logits[:, :-1]  # this is the bug that cause the return not improving
     sequence = sequence[:, 1:]
-
-    print(f"{logits.shape=}")
 
     log_probs = logits.log_softmax(dim=-1).gather(
         dim=-1, index=sequence.unsqueeze(dim=-1)
@@ -90,7 +87,6 @@ def rollout(model, tokenizer, question: str, oracle_answer: str, n_rollout=12):
     prompt = tokenizer.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True
     )
-    print(f"{prompt=}")
 
     # Tokenize input
     inputs = tokenizer(
@@ -100,7 +96,6 @@ def rollout(model, tokenizer, question: str, oracle_answer: str, n_rollout=12):
         padding_side="left",
         return_attention_mask=True,
     ).to(device)
-    print(f"{inputs=}")
     inputs["input_ids"] = inputs["input_ids"].repeat(n_rollout, 1)
     inputs["attention_mask"] = inputs["attention_mask"].repeat(n_rollout, 1)
 
@@ -108,7 +103,6 @@ def rollout(model, tokenizer, question: str, oracle_answer: str, n_rollout=12):
     top_p = 1.0
     temperature = 1.0
     pad_token_id = tokenizer.eos_token_id
-    print(f"{pad_token_id=}")
 
     generation_config = GenerationConfig(
         do_sample=True,
@@ -132,11 +126,8 @@ def rollout(model, tokenizer, question: str, oracle_answer: str, n_rollout=12):
     advanteges = batch_advantage(returns)
 
     log_probs = seq_log_probs(model, sequence_ids)
-    print(log_probs.shape)
     log_probs_ref = seq_log_probs(model_ref, sequence_ids)
-    print(f"in rollout: {log_probs.max()=} {log_probs_ref.max()=}")
 
-    print(returns, advanteges)
     experiences = []
     for i in range(n_rollout):
         e = MyExperience(
@@ -165,10 +156,7 @@ def reward_fn(answer: str, oracle_answer: str):
 
 experiences = rollout(model, tokenizer, "213 + 215 =", "428")
 for e in experiences:
-    print(
-        f"============ {e.reward=}",
-        e.response,
-    )
+    print(f"============ {e.reward=}", e.response,)  # fmt: skip
 
 
 def approx_kl_divergence(
@@ -190,7 +178,7 @@ def approx_kl_divergence(
 def main():
     lr = 5e-6
     optimizer = optim.Adam(model.parameters(), lr=lr)
-    n_steps = 100
+    n_steps = 300
     n_epochs_per_step = 1
 
     max_norm = 1.0  # gradient clipping
@@ -199,11 +187,10 @@ def main():
 
     for i in range(n_steps):
         experiences = rollout(model, tokenizer, "213 + 215 =", "428")
-        episode_return_sum = sum([e.reward for e in experiences])
+        episode_return_sum = sum([e.reward for e in experiences]).item()
 
         model.train()
         for step_epoch in range(n_epochs_per_step):
-            print(f"============={step_epoch=}==============")
             sequence = torch.stack([e.sequence for e in experiences])
             log_probs = seq_log_probs(model, sequence)
 
@@ -213,9 +200,6 @@ def main():
                 torch.stack([e.advantage for e in experiences])
                 .unsqueeze(dim=-1)
                 .to(device)
-            )
-            print(
-                f"{log_probs.max()=} {log_probs_old.max()=} {log_probs_old_ref.max()=}"
             )
 
             # kl = torch.nn.functional.kl_div(
@@ -234,7 +218,6 @@ def main():
             surr2 = ratio.clamp(1 - clip_eps, 1 + clip_eps) * advantages
             loss = -torch.min(surr1, surr2) + kl_weight * kl
             loss = loss.mean()
-            print(f"{loss=}, {kl=}")
 
             if not loss.isfinite():
                 print(f"Loss not finite, skipping backward, loss={loss}")
@@ -242,21 +225,24 @@ def main():
 
             loss.backward()
             grad_norm = clip_grad_norm_(model.parameters(), max_norm=max_norm)
-            print(f"{step_epoch}: kl={kl: .4f}, grad_norm={grad_norm: .4f}")
 
-            wandb.log({"loss": loss, "kl": kl, "grad_norm": grad_norm})
+            log_entry = {
+                "step": i,
+                "loss": loss,
+                "kl": kl,
+                "grad_norm": grad_norm,
+                "returns": episode_return_sum,
+            }
+            wandb.log(log_entry)
 
-            # for p in model.parameters():
-            #     if not p.grad.max().isfinite():
-            #         print("p.grad is not finite")
-            #         raise ValueError("p.grad is not finite")
+            log_msg = ", ".join([
+                f"{k}: {v:,}" if isinstance(v, int)
+                else f"{k}: {v:.5f}" if isinstance(v, float) or isinstance(v, torch.Tensor)
+                else f"{k}: {v}"
+                for k, v in log_entry.items()
+            ])  # fmt: skip
+            print(f"Step [{i}]: {log_msg}")
             optimizer.step()
-            # for p in model.parameters():
-            #     if not p.max().isfinite():
-            #         print("p is not finite")
-
-        wandb.log({"returns": episode_return_sum})
-        print(f"{i=} {episode_return_sum=}")
 
 
 main()
