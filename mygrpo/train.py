@@ -63,6 +63,10 @@ def seq_log_probs(model, sequence):
         attention_mask=attention_mask,
         use_cache=False,
     ).logits  # [12, seq_len, vocab_size]
+
+    logits = logits[:, :-1]  # this is the bug that cause the return not improving
+    sequence = sequence[:, 1:]
+
     print(f"{logits.shape=}")
 
     log_probs = logits.log_softmax(dim=-1).gather(
@@ -151,9 +155,9 @@ def reward_fn(answer: str, oracle_answer: str):
     pattern = r"<answer>(.*?)</answer>"
     match = re.search(pattern, answer, re.DOTALL)
     if not match:
-        return 0
+        return 0.0
     if oracle_answer == match.group(1).strip():
-        return 1
+        return 1.0
     if oracle_answer in match.group(1):
         return 0.5
     return 0.01
