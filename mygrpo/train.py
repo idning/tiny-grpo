@@ -1,4 +1,3 @@
-import os
 import re
 import sys
 
@@ -11,8 +10,6 @@ import torch.optim as optim
 import wandb
 from torch.nn.utils import clip_grad_norm_
 from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
-
-# os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
@@ -165,22 +162,6 @@ for e in experiences:
     print(f"============ {e.reward=}", e.response,)  # fmt: skip
 
 
-def approx_kl_divergence(
-    log_probs: torch.Tensor,
-    log_probs_ref: torch.Tensor,
-    action_mask: Optional[torch.Tensor],
-) -> torch.Tensor:
-    """
-    Monte-Carlo approximation of KL divergence, k3 estimator, see: http://joschu.net/blog/kl-approx.html
-    """
-
-    log_ratio = log_probs_ref.float() - log_probs.float()
-    if action_mask is not None:
-        log_ratio = log_ratio * action_mask
-
-    return log_ratio.exp() - log_ratio - 1
-
-
 def main():
     lr = 5e-6
     optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -211,11 +192,6 @@ def main():
             kl = torch.nn.functional.kl_div(
                 log_probs, log_probs_old_ref, reduction="batchmean", log_target=True
             ).mean()
-            # kl = approx_kl_divergence(
-            #     log_probs=log_probs,
-            #     log_probs_ref=log_probs_old_ref,
-            #     action_mask=None,
-            # ).mean()
 
             assert torch.allclose(log_probs, log_probs_old, atol=1e-3, rtol=1e-3)  # if n_epoch_per_step == 1, this thould be true  # fmt: skip
 
