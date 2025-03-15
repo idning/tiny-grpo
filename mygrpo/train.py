@@ -238,7 +238,7 @@ def main():
             grad_norm = clip_grad_norm_(model.parameters(), max_norm=max_norm)
             print(f"{step_epoch}: kl={kl: .4f}, grad_norm={grad_norm: .4f}")
 
-            # wandb.log({"kl": kl, "grad_norm": grad_norm})
+            wandb.log({"loss": loss, "kl": kl, "grad_norm": grad_norm})
 
             # for p in model.parameters():
             #     if not p.grad.max().isfinite():

@@ -1,6 +1,7 @@
 import json
 import random
 import re
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Iterator, Optional
@@ -250,10 +251,15 @@ def main():
     replay_buffer = ReplayBuffer()
     objective = GRPOLoss(clip_eps=clip_eps, kl_weight=kl_weight)
 
+    if len(sys.argv) > 1:
+        job_name = sys.argv[1]
+    else:
+        job_name = None
+
     if wandb_project is None:
         wandb.init(mode="disabled")
     else:
-        wandb.init(project=wandb_project)
+        wandb.init(project=wandb_project, name=job_name)
 
     for k, prompt_batch in enumerate(prompt_loader):
         rollout_returns = []
