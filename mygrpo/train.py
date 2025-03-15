@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 
 from dataclasses import dataclass, fields
 from typing import Optional
@@ -16,8 +17,13 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
 model_id = "meta-llama/Llama-3.2-1B-Instruct"
-wandb_project = "my-tiny-grpo"  # "tiny_grpo"
-wandb.init(project=wandb_project)
+
+if len(sys.argv) > 1:
+    job_name = sys.argv[1]
+else:
+    job_name = None
+wandb_project = "mygrpo"  # "tiny_grpo"
+wandb.init(project=wandb_project, name=job_name)
 
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 tokenizer.pad_token = tokenizer.eos_token
@@ -202,14 +208,14 @@ def main():
                 .to(device)
             )
 
-            # kl = torch.nn.functional.kl_div(
-            #     log_probs, log_probs_old_ref, reduction="batchmean"
-            # ).mean()
-            kl = approx_kl_divergence(
-                log_probs=log_probs,
-                log_probs_ref=log_probs_old_ref,
-                action_mask=None,
+            kl = torch.nn.functional.kl_div(
+                log_probs, log_probs_old_ref, reduction="batchmean", log_target=True
             ).mean()
+            # kl = approx_kl_divergence(
+            #     log_probs=log_probs,
+            #     log_probs_ref=log_probs_old_ref,
+            #     action_mask=None,
+            # ).mean()
 
             assert torch.allclose(log_probs, log_probs_old, atol=1e-3, rtol=1e-3)  # if n_epoch_per_step == 1, this thould be true  # fmt: skip
 
